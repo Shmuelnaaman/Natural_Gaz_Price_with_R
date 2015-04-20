@@ -1,0 +1,1823 @@
+
+---
+title: "Modeling Natural Gas Price"
+author: Shmuel Naaman
+date: Apr, 2015
+
+--- 
+ 
+----------------------------------------------------------------
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using
+# in your analysis in this code chunk.
+
+# Notice that the parameter 'echo' was set to FALSE for this code chunk.
+# This prevents the code from displaying in the knitted HTML output.
+# You should set echo=FALSE for all code chunks in your file.
+
+library(ggplot2)
+library(tidyr)
+library (dplyr)
+library('memisc')
+library(gridExtra) 
+library(xts)
+library(GGally)
+```
+
+ <span style="color:blue; font-family:Georgia; font-size:2em;">
+ Introduction
+ </span>
+
+
+#### Natural gas price known as one of the more volatile commodity in the 
+#### market. This is surprising since the Natural gas market is local, and only
+#### few parameters are supposed to influence its price. In this project I 
+#### selected few parameters that might influence Natural gas price and
+#### analyse the relation between them. 
+
+--------
+
+#### 'Total storage' is the variable that probably comprises the most influence
+#### on Natural gas price. This variable summarizes the production and 
+#### consumption and published weekly by 'Energy Information Administration'.
+
+
+--------
+
+#### Weather or more specifically the 'Temperature', is another important 
+#### variable, that  determines the consumption of Natural gas. Daily average 
+#### 'Temperatures' are published daily by 'NOAA'. 
+
+--------
+
+#### The energy market include many components that competing with one another,
+#### here I choose the price of 'Oil' to represents the energy market. Oil 
+#### market differ in many aspects from the natural gas market, therefore is a
+#### good candidate to be included in a model. 
+
+--------
+
+#### The general strength of the economy, another variable that might 
+#### influences consumption of natural gas. I chosen the 'S&P' index to 
+#### represent the economy strength.  
+
+***
+
+========
+
+### Read the Data: S&P......, Natural Gas....... and OIL........ Daily Price, 
+### NG storage......, and Temp at New York......., Texas......, California......
+### and Wyoming.......
+  
+========
+
+```{r echo=FALSE, Load_analysed_Data_create_functions}
+ 
+ setwd('C:/Shmuel/Nanodegree/Explorer_Data_R_project')
+ 
+ #############################Help Functions###################################
+ # Function that read the weather file.
+ Read_Weather <- function(File_name, Date_name,Temp_name){
+   
+ Temp_DF <- read.csv(File_name, skip = 2, as.is= T,
+                     col.names = c('Day', 'JD', 'Month', 
+                                   'State_id', 'Year', Temp_name)) 
+ 
+ Temp_DF <- unite(Temp_DF, 'Date', Year, Month, Day,  sep = '-')
+ Temp_DF[, Date_name] <- as.Date(Temp_DF[, Date_name], '%Y-%m-%d')
+ Temp_DF[,Temp_name] <- suppressWarnings(as.numeric(Temp_DF[,Temp_name]))
+ Temp_DF <- Temp_DF[, c("Date", Temp_name, "JD",  "State_id")]
+ 
+ return(Temp_DF) }
+ 
+ # Function to categorize the Weather Parameter--------------------------------
+  Ctgr_Weather <- function(DF,Ovr,Unr){
+   
+ # Conditional mean to determine the daily average  
+   Ave_Temp <-group_by (subset(DF, !is.na(temp)), day)
+   DF.Temp_day <- summarise(Ave_Temp, Ave_Temp_C  = mean (temp))
+   DF <- merge(DF, DF.Temp_day[, c('day', 'Ave_Temp_C')], by = 'day', all = TRUE)
+ 
+ # Categorize the temperature with respect to the average. 
+ # When temperatures are 20% higher (lower) from the average in the summer 
+ # (winter), consumption is expected to rise and therefore storage might go 
+ # 'Under' ('Over') the average.
+   DF$Temp_tmp_B <- ifelse((DF$day>300 | DF$day<120),
+                           ifelse( DF$temp < Unr*DF$Ave_Temp_C , 
+                                   'Under', 
+                                   ifelse( DF$temp >= Ovr*DF$Ave_Temp_C ,
+                                           'Over','Avg')),
+                           ifelse( DF$temp > Unr*DF$Ave_Temp_C , 
+                                   'Under', 
+                                   ifelse( DF$temp <= Ovr*DF$Ave_Temp_C ,
+                                           'Over','Avg')))
+ return(DF) 
+ }
+
+################ CHARTS #########################
+# Time course charts ----------------------------------------------------------
+
+Tim_plot <- function(fun.data,  fun.x, fun.y, 
+                     title, x_lb, y_lb, b_w, St,En) {
+    
+    sz= 0.1
+    fun.data$fun.x <- fun.data[, fun.x]
+    fun.data$fun.y <- fun.data[, fun.y]
+
+    ggplot(aes(x = fun.x, y = fun.y),
+            data = subset( fun.data, !is.na( fun.y))  ) +
+      geom_point(size = sz) +
+      scale_x_date(limits = c(St, En)) + 
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)   
+    }
+
+# 1-D Hist vharts  ------------------------------------------------------------
+Hist_cor <- function(fun.data,  fun.x, fun.sclale, 
+                     title, x_lb, b_w) {
+
+    fun.data$fun.x <- fun.data[, fun.x]
+    
+    ggplot(aes(x = fun.x),
+           data = fun.data ) +
+      geom_histogram(colour = 'darkgreen', 
+                     fill = 'gray', 
+                     binwidth = b_w) +  
+      scale_x_continuous(breaks = fun.sclale) +
+      ggtitle(title) +
+      xlab(x_lb)      
+    }
+
+# 1-D Hist log Scale charts ---------------------------------------------------
+Hist_L_cor <- function(fun.data,  fun.x, fun.sclale, 
+                       title, x_lb, b_w) {
+
+    fun.data$fun.x <- fun.data[, fun.x]
+    
+    ggplot(aes(x = fun.x),           
+           data = fun.data ) +
+      geom_histogram(colour = 'darkgreen', 
+                     fill = 'gray', 
+                     binwidth = b_w) +
+      scale_x_log10(breaks= fun.sclale) +
+      ggtitle(title) +
+      xlab(x_lb)   
+    }
+
+# jitter Charts ---------------------------------------------------------------
+jitt_plot <- function(fun.data, fun.x, fun.y, fun.z, 
+                      mdpnt, title, x_lb, y_lb) {
+    sz=2
+    al=0.1
+    fun.data$fun.x <- fun.data[, fun.x]
+    fun.data$fun.y <- fun.data[, fun.y]
+    fun.data$fun.z <- fun.data[, fun.z]
+    
+    ggplot(aes(x = factor(fun.x), y = fun.y),
+            data = subset( fun.data, !is.na(fun.x) & !is.na(fun.y))) +
+      geom_jitter(alpha = al, 
+                  size = sz, 
+                  aes(color = fun.z) ) +
+      scale_colour_gradient2( mid = 'green', 
+                              low = 'blue', 
+                              high = 'red',
+                              midpoint = mdpnt, 
+                              space = 'rgb',
+                              na.value = 'grey50', 
+                              guide = 'colourbar',
+                              name = fun.z) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)   
+    }
+
+# box plot         ------------------------------------------------------------
+Bx_plot <- function(fun.data,  fun.x, fun.y, 
+                    title, x_lb, y_lb) {
+    sz=5
+    shp=3
+    fun.data$fun.x <- fun.data[, fun.x]
+    fun.data$fun.y <- fun.data[, fun.y]
+    
+    ggplot(aes(x = factor(fun.x), y = fun.y),
+            data = subset( fun.data, !is.na(fun.x) & !is.na(fun.y))) +
+      geom_boxplot() +
+      stat_summary(fun.y = mean, 
+                   geom = 'point', 
+                   shape = shp,
+                   size = sz) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)   
+    }
+
+# box plot1         ------------------------------------------------------------
+Bx_plot1 <- function(fun.data,  fun.x, fun.y, fun.z, zer,
+                    title, x_lb, y_lb) {
+    sz=5
+    shp=3
+    fun.data$fun.x <- as.factor(fun.data[, fun.x])
+    fun.data$fun.y <- fun.data[, fun.y]
+    fun.data$fun.z <- fun.data[, fun.z]
+
+    ggplot(aes(x = factor(fun.x), y = fun.y),
+            data = subset( fun.data, !is.na(fun.x) & !is.na(fun.y))) +
+      geom_boxplot(aes(fill = factor(fun.z))) + 
+      stat_summary(fun.y = mean, 
+                   geom = 'point', 
+                   shape = shp,
+                   size = sz) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)   
+    }
+
+
+# 2-D scatter Charts-----------------------------------------------------------
+sct_plot_cor_2 <- function(fun.data, fun.y, fun.x, 
+                           title, y_lb, x_lb) {
+  
+    al=0.1
+    sz=2.5
+    fun.data$fun.y <- fun.data[, fun.y]
+    fun.data$fun.x <- fun.data[, fun.x]
+        
+    ggplot(aes(y = fun.y, x = fun.x),
+           data = subset(fun.data, !is.na(fun.y) & !is.na(fun.x))) +
+      geom_point(alpha = al, 
+                 size = sz) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)  
+}
+
+# 3-D scatter Charts  ---------------------------------------------------------
+sct_plot_cor <- function(fun.data, fun.y, fun.x, 
+                         fun.color, title, y_lb, x_lb) {
+  
+    al=0.1
+    sz=2.5
+    fun.data$fun.y <- fun.data[, fun.y]
+    fun.data$fun.x <- fun.data[, fun.x]
+    fun.data$fun.color <- fun.data[, fun.color]
+        
+    ggplot(aes(y = fun.y, x = fun.x),
+           data = subset(fun.data, !is.na(fun.y) & !is.na(fun.x))) +
+      geom_jitter(alpha = al, 
+                 size = sz, 
+                 aes(color = fun.color)) +
+      scale_colour_gradient2( mid = 'green', 
+                              low = 'blue', 
+                              high = 'red',
+                              midpoint = (max( fun.data[, fun.color])+ 
+                                            min( fun.data[, fun.color]))/2, 
+                              space = 'rgb',
+                              na.value = 'grey50', 
+                              guide = 'colourbar',
+                              name = fun.color) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)  
+}
+ 
+# 3-D stack Charts   ----------------------------------------------------------
+Stk_plot_cor <- function(fun.data, fun.y, fun.x, fun.color, 
+                         title, y_lb, x_lb) {
+    sz = 1
+    al = 0.3
+    fun.data$fun.y <- fun.data[, fun.y]
+    fun.data$fun.x <- fun.data[, fun.x]
+    fun.data$fun.color <- fun.data[, fun.color]
+        
+    ggplot(aes(y = fun.y, x = fun.x),
+           data = subset(fun.data, !is.na(fun.y) & !is.na(fun.x))) +
+      geom_jitter(alpha = al, 
+                  aes(color = fun.color), 
+                  size = sz) +
+      geom_line(stat = 'summary',
+                fun.y = mean, 
+                size = sz,
+                color = 'black') +
+      scale_colour_gradient2( mid = 'green', 
+                              low = 'blue', 
+                              high = 'red',
+                              midpoint =  (max( fun.data[, fun.color])+ 
+                                              min( fun.data[, fun.color]))/2,
+                              space = 'rgb',  
+                              na.value = 'grey50', 
+                              guide = 'colourbar', 
+                              name = fun.color) +
+      ggtitle(title) +
+      ylab(y_lb) + 
+      xlab(x_lb)  
+}
+
+############READ THE DATA #################################################
+ # Name of the data frame columns  
+ Var_Name <- c('Date', 'day', 'week', 'year', 
+               'Temp_CA',  'Temp_WY', 'Temp_TX', 'Temp_NY', 
+               'NG_Price', 'WTI_Price', 'S_P_Close_adj', 'Tot_storg',
+               'Temp_MN' )
+
+ # S&P DATA Close_adj price, --------------------------------------------------
+ # skip 2 first lines in the header and convert the Date to 'Date' class.
+ S_P <- read.csv('S_P_2015.csv', skip = 2,
+                     col.names = c(Var_Name[1], 'Open', 'High', 
+                                   'Low', 'Close', 'Volume', Var_Name[11]))
+
+ S_P[, Var_Name[1]] <- as.Date(S_P[,Var_Name[1]], '%d/%m/%Y')
+ DF  <-  S_P[,c("Date","S_P_Close_adj")]
+ remove(S_P)
+ 
+ # Henry Hub Natural Gas Spot Daily Price,  -----------------------------------
+ # skip 2 first lines in the header and convert the Date to 'Date' class.
+ NG_P <- read.csv('NG_P_Mar_2015.csv', skip = 2,
+                  col.names = c(Var_Name[1], Var_Name[9]))
+
+ NG_P[, Var_Name[1]] <- as.Date(NG_P[, Var_Name[1]], '%b %d, %Y')
+ DF <- merge(DF, NG_P[, c("Date", "NG_Price")],    
+             by = Var_Name[1], all = TRUE)
+
+ remove(NG_P)
+ 
+ # WTI OIL Price,           ---------------------------------------------------
+ # skip 2 first lines in the header and convert the Date to 'Date' class.
+
+ OIL_P <- read.csv('OIL_P_Mar_2015.csv', skip = 2,
+                   col.names = c(Var_Name[1], Var_Name[10], 'Price_Brent', 'X'))
+
+ OIL_P[,Var_Name[1]] <- as.Date(OIL_P[, Var_Name[1]], '%b %d, %Y')
+ DF <- merge(DF, OIL_P[, c("Date", "WTI_Price" )],   
+             by = Var_Name[1], all = TRUE)
+
+ remove(OIL_P)
+ 
+ # Natural Gas Storage,    ---------------------------------------------------
+ # skip 2 first lines in the header and convert the Date to 'Date' class.
+ NG_STOR <- read.csv('NG_STOR_WKLY_2015.csv', skip = 2,
+                     col.names = c(Var_Name[1], Var_Name[12], 'T_E_strg', 
+                                   'T_w_strg', 'P_strg', 'P_S_strg', 
+                                   'P_NS_strg', 'X'))
+
+ NG_STOR[,Var_Name[1]] <- as.Date(NG_STOR[,Var_Name[1]], '%b %d, %Y')
+ DF <- merge(DF, NG_STOR[, c("Date","Tot_storg")], 
+             by = Var_Name[1], all = TRUE)
+
+ remove(NG_STOR)
+
+
+ # reading the weather data New York Texas California and Wyoming. -------------
+name_temp <- c('CA046719_6554_2013.csv',
+               'WY486195_8485_2013.csv',
+               'TX419532_8026_2013.csv',
+               'NY305801_0190_2013.csv')
+
+for(i in c(1,2,3,4)) {
+DF <- merge(DF, Read_Weather(name_temp[i],
+                             Var_Name[1],Var_Name[i+4])[c(Var_Name[1],
+                                                        Var_Name[i+4])], 
+            by = 'Date', all = TRUE)
+}
+
+#################### MERGE the relevant variables ##########################
+
+ # Analysis includes data in the fallowing range. 
+ Strt_Date <- as.Date('1999-01-01')
+ End_Date  <- as.Date('2015-04-01')
+ quart <- c('Min.', '1st Qu.', 'Median', '3rd Qu.', 'Max.')
+ 
+ # create daily, weekly and yearly tags. -------------------------------------
+ DF$week <- as.numeric( format(DF$Date, '%U'))
+ 
+ DF$year <- as.numeric( format(DF$Date, '%Y'))
+ 
+ DF$day  <- as.numeric( format(DF$Date, '%j'))
+
+ 
+ # set the beginig of the data set at 1999
+ DF <- subset(DF, DF$Date >= Strt_Date)
+
+ ################## BASIC ANALYSIS ###########################################
+ # Help variables such as diff and category
+ 
+ # Categorize the total STORAGE  ----------------------------------------------
+ # the variable Tot_storg is 'Over' or 'Under' when total storage increase 
+ # above or below 20% from the average. 
+  Ovr <- 0.8
+  Unr <- 1.2
+
+ DF.strg_W <- subset(DF,!is.na(Tot_storg)) %>%
+   group_by(week) %>%
+   summarise(AVG_storg_W  = mean (Tot_storg))
+ 
+ DF <- merge(DF, DF.strg_W[, c(1,2)], by = 'week', all = TRUE)
+ DF[rownames(subset(DF, is.na(Tot_storg))), 'AVG_storg_W']<- NA
+ DF <- arrange(DF, Date)
+ 
+ # Interpolate for NA values
+ DF$Tot_storg <- na.locf(DF$Tot_storg, na.rm = FALSE)
+ DF$AVG_storg_W <- na.locf(DF$AVG_storg_W, na.rm = FALSE)
+ 
+ DF$Tot_storg_B <- ifelse(DF$Tot_storg >= Unr*DF$AVG_storg_W, 'Over', 
+                          ifelse(DF$Tot_storg <= Ovr*DF$AVG_storg_W, 'Under', 
+                                 'Avg'))
+
+ # calculate the differance from average 
+ DF$diff_storg <- DF$Tot_storg-DF$AVG_storg_W
+
+ # calculate the average TEMPERATURE over the 4 sites. ------------------------
+ DF$Temp_MN <- (DF$Temp_CA + DF$Temp_NY + DF$Temp_TX + DF$Temp_WY)/4 
+
+
+ # Categorize the temperature and calculate the average between the Temp 
+ # and the average Temp (diff_Temp)--------------------------------------------
+ for(i in c(5,6,7,8,13)) {
+
+   names(DF)[names(DF) == Var_Name[i]] <- 'temp' 
+   DF <- Ctgr_Weather(DF,0.8,1.2) 
+   names(DF)[names(DF) == 'temp'] <- Var_Name[i]
+   names(DF)[names(DF) == 'Temp_tmp_B'] <- paste(Var_Name[i], '_B', sep = '')   
+   names(DF)[names(DF) == 'Ave_Temp_C'] <- paste(Var_Name[i], '_AVE', sep = '')  
+   DF[, paste('diff_', Var_Name[i], sep = '')] <- DF[, Var_Name[i]] - 
+     DF[,  paste(Var_Name[i], '_AVE', sep = '') ] 
+   }   
+
+DF <- arrange(DF, Date)
+# D is similar to DF but do not include NA values
+
+D <- DF[,c('week', 'Temp_CA', 'Temp_WY', 'Temp_TX', 'Temp_NY', 'Tot_storg',
+           'NG_Price', 'WTI_Price', 'S_P_Close_adj', 'year', 'Temp_MN', 
+           'diff_Temp_CA', 'diff_Temp_WY', 'diff_Temp_TX', 'diff_Temp_NY',
+           'diff_Temp_MN',  'diff_storg' )]
+
+D<-D[complete.cases(D), ]
+
+D<-D[sapply(D, is.numeric)] 
+
+# cut the Temp and storage and NG price in to the 4 quartiles,
+
+D$diff_Temp_MN.bucket <- cut(D$diff_Temp_MN,
+                        floor(summary(D$diff_Temp_MN))[quart])
+
+D$diff_storg.bucket <- cut(D$diff_storg,
+                         floor(summary(D$diff_storg))[quart])
+
+D$NG_Price.bucket <- cut(D$NG_Price,
+                         floor(summary(D$NG_Price))[quart])
+
+# conditional correlation with respect to years
+A <- group_by (D, year)
+
+DF.corr <- summarise(A, Storage_corr = cor(NG_Price,
+                                           diff_storg, 
+                                           method = c('pearson')))
+
+
+DF.corr[, 'Temp_corr'] <- summarise(A, 
+                                    Temp_corr = cor(NG_Price, 
+                                                    diff_Temp_MN, 
+                                                    method = c('pearson')))['Temp_corr']
+
+
+DF.corr[, 'S_P_corr']  <- summarise(A, 
+                                    S_P_corr = cor(NG_Price,
+                                                   S_P_Close_adj, 
+                                                   method = c('pearson')))['S_P_corr']
+
+DF.corr['WTI_corr']    <- summarise(A, 
+                                    WTI_corr = cor(NG_Price, 
+                                                   WTI_Price, 
+                                                   method = c('pearson')))['WTI_corr']
+
+DF.corr['corr_Strg_Tmp'] <- summarise(A,
+                                      corr_Strg_Tmp = cor(diff_Temp_MN, 
+                                                    diff_storg, 
+                                                    method = c('pearson')))['corr_Strg_Tmp']
+
+DF.corr['WTI_storg']    <- summarise(A, 
+                                    WTI_corr = cor(WTI_Price, 
+                                                   diff_storg, 
+                                                   method = c('pearson')))['WTI_corr']
+
+DF.corr['WTI_S_P']    <- summarise(A, 
+                                    WTI_corr = cor(WTI_Price, 
+                                                   S_P_Close_adj, 
+                                                   method = c('pearson')))['WTI_corr']
+
+
+DF <- merge(DF, DF.corr, by = 'year', all = TRUE)
+D <- merge(D, DF.corr, by = 'year', all = TRUE)
+
+D$Storage_corr.bucket <- cut(D$Storage_corr,
+                        c(seq(-1,1,0.2)))
+
+D$Temp_corr.bucket <- cut(D$Temp_corr,
+                        c(seq(-1,1,0.2)))
+
+D$WTI_corr.bucket <- cut(D$WTI_corr,
+                        c(seq(-1,1,0.2)))
+
+
+
+A1 <- gather(D, "corr_type", "corr_tot", c(21, 22,  24))
+
+A2 <- gather(D, "corr_type", "corr_tot", c(26, 27,  24))
+
+
+
+ # Clear some of the unnecessary data  ----------------------------------------
+ remove( 'DF.strg_W') 
+
+```
+
+
+ <span style="color:blue; font-family:Georgia; font-size:2em;">
+Univariate Plots Section
+ </span>
+ 
+========
+
+### Data Structure 
+ 
+--------
+
+```{r echo=FALSE, introduce_Data}
+
+Data <- DF[ ,c('Date', 'Temp_CA', 'Temp_CA_B', 'diff_Temp_CA', 'Temp_WY', 
+               'Temp_WY_B', 'diff_Temp_WY', 'Temp_TX', 'Temp_TX_B', 
+               'diff_Temp_TX', 'Temp_NY', 'Temp_NY_B', 'diff_Temp_NY',
+               'Temp_MN',  'Temp_MN_B', 'diff_Temp_MN','Tot_storg',
+               'Tot_storg_B', 'diff_storg',  'NG_Price', 'WTI_Price',
+               'S_P_Close_adj')]
+dim(Data)
+
+names(Data)
+
+na <- names(Data[sapply(Data, is.character)])
+
+ for(i in c(1,2,3,4,5,6)) {
+   print (c(na[i],':',levels(as.factor(DF[, na[i]]))))
+ }
+
+summary(Data[sapply(Data, is.numeric)])
+
+```
+
+
+#### 50% of the time, Natural Gas price oscillates between '$3.37' to '$6.18'.
+#### This range represents 90% change in price. Similar parameter measure in the
+#### total storage of Natural Gas, shows only 60% change. 'Oil', 'S&P' and 
+#### 'Temperature' showing changes of 180%, 30% and 50% respectively.
+
+========
+
+
+### First we will look at the histogram of each Variable
+
+***
+
+```{r echo=FALSE, Univariate_Plots_hist_NG_price}
+
+tix <- c(seq(2, 20, 4), 20)
+
+p1 <- Hist_cor( DF, 'NG_Price', tix, 
+                'Natural-Gas Price (1999-2015)', 
+                '[$ per MBtu]',0.8)
+
+p2 <- Hist_L_cor( DF, 'NG_Price', tix, 
+                  'Log Scale', 
+                  '[$ per MBtu]',0.06)
+
+grid.arrange(p1, p2, ncol=2)
+
+summary(DF$NG_Price)
+
+```
+
+#### Figure 1: Distribution of Natural Gas prices, depicted using a linear 
+#### scale (left) and logarithmic scale (right). Notice that the distribution  
+#### is not specific.  
+
+***
+
+```{r echo=FALSE, Univariate_Plots_hist_Oil_price}
+
+tix <- c(seq(20, 140, 20))
+
+p1 <- Hist_cor( DF, 'WTI_Price', tix, 
+                'Oil Price (1999-2015)', 
+                '[$ per Barrel]',5)
+
+p2 <- Hist_L_cor( DF, 'WTI_Price', tix, 
+                  'Log Scale', 
+                  '[$ per Barrel]',0.05)
+
+grid.arrange(p1, p2, ncol=2)
+
+summary(DF$WTI_Price)
+
+
+```
+
+#### Figure 2: Distribution of Oil prices, depicted using a linear scale (left)
+#### and logarithmic scale (right). Again the distribution is not specific. 
+
+***
+   
+```{r echo=FALSE, Univariate_Plots_hist_S&P_Price}
+
+tix <- c(seq(800, 2000, 400)) 
+
+p1 <- Hist_cor(DF, 'S_P_Close_adj', tix, 
+               'S&P Price, (1999-2015)', '[$]',50)
+
+p2 <- Hist_L_cor(DF, 'S_P_Close_adj', tix, 
+                 'Log Scale', '[$]',0.041)
+
+grid.arrange(p1, p2, ncol=2)
+
+summary(DF$S_P_Close_adj)
+
+
+```
+
+#### Figure 3: Similar as in figure 1 and figure 2 but for the S&P prices, 
+#### similar to previous variables the distribution is not specific.
+
+***
+
+```{r echo=FALSE, Univariate_Plots_hist_Total_Storage}
+
+tix <- c(seq(1000, 4000, 1000))
+
+p1 <- Hist_cor( DF, 'Tot_storg', tix, 
+                'Natural-Gas Total Storage', 
+                '[MBtu]',200)
+
+p2 <- Hist_cor( DF, 'diff_storg',  c(seq(-1000, 1000, 400)), 
+                'Differance ,1999-2015', 
+                '[MBtu]',200)
+
+grid.arrange(p1, p2, ncol=2)
+
+summary(DF$Tot_storg)
+summary(DF$diff_storg)
+
+
+```
+ 
+#### Figure 4: Distribution of Natural Gas 'Total Storage'. The distribution 
+#### seems compact on the linear scale (left). On the right, histogram that 
+#### represent the difference between the 'Total Storage' and the daily 
+#### average.  
+
+***
+
+```{r echo=FALSE, Univariate_Plots_hist_Temp}
+tixT <- c(seq(0, 100, 20)) 
+tixD <- c(seq(-40, 40, 20)) 
+Nam <- c('Temp_WY','Temp_TX','Temp_NY','Temp_CA','Temp_MN')
+Nam_C <- c('Wyoming ','Texas','New York','California','Average')
+
+ for(i in c(1,2,3,4,5)) {
+   assign(paste('p', i*2-1, sep = ''), 
+          Hist_cor( DF, Nam[i], 
+                    tixT, paste(Nam_C[i], 
+                                'Temperature', sep = ''), 'Temp [F]',3))
+   
+   assign(paste('p', i*2, sep = '') , 
+          Hist_cor( DF, paste('diff_', Nam[i], sep = ''),  
+                    tixT, 'Difference ,1999-2013', 'Temp [F]',3))
+   
+   }
+grid.arrange(p1, p2, ncol=2) 
+summary(DF$Temp_WY)
+summary(DF$diff_Temp_WY)
+
+grid.arrange(p3, p4, ncol=2) 
+summary(DF$Temp_TX)
+summary(DF$diff_Temp_TX)
+
+grid.arrange(p5, p6, ncol=2) 
+summary(DF$Temp_NY)
+summary(DF$diff_Temp_NY)
+
+grid.arrange(p7, p8, ncol=2) 
+summary(DF$Temp_CA)
+summary(DF$diff_Temp_CA)
+
+grid.arrange(p9, p10, ncol=2) 
+summary(DF$Temp_MN)
+summary(DF$diff_Temp_MN)
+
+```
+
+#### Figure 5: Distribution of 'Temperature' for four different sites and the 
+#### average. Here again distribution seems compact on the linear scale (left).
+#### On the right, histogram that represent the difference between the 
+#### 'Temperature' and the daily average.  
+ 
+***
+======== 
+
+<span style="color:blue; font-family:Georgia; font-size:2em;">
+Univariate Analysis
+</span>
+
+### What is the structure of your dataset?
+
+--------
+
+#### There are 10 numeric variables: 
+####                                 'Date'     'Temp_CA'   'Temp_WY' 'Temp_TX'
+####                                 'Temp_NY'  'Temp_MN'   'Tot_storg' 
+####                                 'NG_Price' 'WTI_Price' 'S_P_Close_adj'. 
+
+--------
+
+#### There are 6 categorical variables: 
+####                                    'Tot_storg_B' 'Temp_CA_B' 'Temp_WY_B' 
+####                                    'Temp_TX_B'   'Temp_NY_B' 'Temp_MN_B' 
+
+--------
+
+#### Each variable include a time course of ~5800 time steps. 
+
+--------
+
+#### Categorical variables have 3 possible values: 'Avg','Over' or 'Under'
+#### When temperatures are 20% higher (lower) from the average in the summer 
+#### (winter), consumption is expected to rise and therefore storage might go 
+#### 'Under' ('Over') the average.
+
+--------
+
+#### Storage also has a categorical variable with similar 3 possible values: 
+#### 'Avg','Over' or 'Under', for values that are 20% 'Over' or 'Under' the 
+#### average. 
+
+--------
+
+#### In addition for each categorical variable I calculated continues variable 
+#### that represents the difference from average. 
+
+========
+
+
+### What is/are the main feature(s) of interest in your dataset?
+
+--------
+
+
+#### 'Natural gas' Price and its relation to 'Natural gas Storage' are the main
+#### features of interest. 
+
+--------
+
+#### I will want to determine in what way 'Storage' deficit or surplus 
+#### correlates or predicts Natural gas price. I believe that 'Storage' 
+#### or some derivative of 'Storage' encapsulate the supply and demand 
+#### in the market and naturally the price. The main interest of this project
+#### is to build a model that will predict Natural gas prices. 
+
+========
+
+### What other features in the dataset do you think will help support your
+### investigation into your feature(s) of interest?
+
+--------
+
+#### Temperature: The largest consumers of Natural gas are power plants.
+#### When extreme (or mild) temperatures remain for long time the high 
+#### (or low) energy consumption might change the storage balance and 
+#### consequently Natural gas prices are expected to fallow. 
+
+--------
+
+#### Oil: Perhaps the most dominant player in the Energy market is Oil. 
+#### This commodity is influence by many parameters from politics to 
+#### advancement of technology. Eventually persistence changes in oil will
+#### proliferate to other energy commodities, in our case Natural gas prices.
+
+--------
+
+#### S&P: Economy growths are associated with changes in energy consumption, 
+#### and thereafter change in Natural gas prices.   
+
+========
+
+### Did you create any new variables from existing variables in the dataset?
+
+--------
+
+#### Yes. 
+
+#### Daily average Temperature: Since the data-set include more than 10 years,
+#### it is possible to calculate an average for each day in the year.  
+
+--------
+
+#### Daily average Storage: Same as for temperature. 
+
+--------
+
+#### Difference between Temperature and the Daily average Temperature: This 
+#### variable is expected to be more correlated with Natural gas prices. 
+
+--------
+
+#### Difference between Storage and the Daily average Storage: Same as for 
+#### temperature. 
+
+========
+
+### Of the features you investigated, were there any unusual distributions? 
+
+--------
+
+
+#### All the variables of the prices (Natural gas, Oil, S&P) have right side 
+#### long tail distribution. In the case of Natural gas, long tail is
+#### associates with short term increases in prices that are probably 
+#### associates with bad weather. Oil prices show the most irregular with 
+#### two high peaks around 20$ and 100$.  S&P prices is also skewed to the 
+#### right, this is caused by the uptrend.
+
+--------
+
+#### The Temperature and the Storage data show compact distribution that is 
+#### associate with the oscillatory tendency of the variables. When transform 
+####those variables compare to the average the distribution become more or less
+#### normal. 
+
+========
+
+### Did you perform any operations on the data to tidy, adjust, or change the
+### form of the data? If so, why did you do this?
+
+--------
+
+
+#### Yes,
+####The Temperature includes data only to 2013, so for any calculation or
+#### visualisation that include Temperature I include or presented only the 
+#### years 1999-2013 period. 
+
+--------
+
+#### 'Storage' data updated weekly, therefore I had to interpolate to achieve
+#### daily resolution. For that I simply include the last reported value for 
+#### the next 6 days. 
+
+========
+
+ <span style="color:blue; font-family:Georgia; font-size:2em;">
+Bivariate Plots Section
+</span>
+
+
+### It is important to look at the time course of each variable and see if we
+### can characterize any common trend or oscillation.
+
+
+***
+
+```{r echo=FALSE, Bivariate_time_chart_NG_Price}
+
+Tim_plot(DF, 'Date', 'NG_Price', 'NG 1999-2015', '[Years]', 
+         'Spot Price [$ per MBtu]', 'Date [Years]',Strt_Date, End_Date)
+
+```
+
+#### Figure 6: Time course of Natural gas price for the years 1999-2015
+
+***
+
+```{r echo=FALSE, Bivariate_time_chart_S_P_Close_adj}
+
+Tim_plot(DF, 'Date', 'S_P_Close_adj', 'S&P 1999-2015', '[Years]', 
+         'Close price  [$]', 'Date [Years]',Strt_Date, End_Date)
+
+```
+
+
+#### Figure 7: Time course of S&P price for the years 1999-2015
+
+***
+
+```{r echo=FALSE, Bivariate_time_chart_WTI_Price}
+
+Tim_plot(DF, 'Date', 'WTI_Price', 'Oil 1999-2015', '[Years]', 
+         'Spot Price  [$ per Barrel]', 'Date [Years]',Strt_Date, End_Date)
+
+```
+
+#### Figure 8: Time course of Oil price for the years 1999-2015
+
+***
+
+### Storage and Temperature are expected to oscillate regularly
+
+
+
+#### It makes sense to stack yearly charts instead of presenting long time 
+#### course. It is also interesting to look at variation from the average. 
+
+
+
+```{r echo=FALSE, Bivariate_time_chart_Tot_storg}
+
+p1 <- Stk_plot_cor(DF, 'Tot_storg', 'week', 'year', 
+                   'Total Storage', '[Million Btu]', '[Weeks]')  
+p2 <- Stk_plot_cor(D, 'diff_storg', 'week', 'year', 
+                   'Diff (1999-2015)', '[Million Btu]', '[Weeks]')  
+
+grid.arrange(p1, p2, ncol=2) 
+
+```
+
+#### Figure 9: Yearly time course for the total (left) and differential (right)
+#### Natural Gas storage for the years 1999-2015.
+
+***
+
+```{r echo=FALSE, Bivariate_time_chart_time_Temp}
+
+Diff= 'Differance (stack 1999-2013)'
+
+Nam <- c('Temp_WY','Temp_TX','Temp_NY','Temp_CA','Temp_MN')
+Nam_C <- c('Wyoming ','Texas','New York','California','Average')
+
+ for(i in c(1,2,3,4,5)) {
+   assign(paste('p', i*2-1, sep = ''), 
+          Stk_plot_cor( DF, Nam[i], 'week', 'year',
+                    paste(Nam_C[i],'Temperature', sep = ' '), 
+                    'Temp [F]', '[Weeks]'))
+   
+   assign(paste('p', i*2, sep = '') , 
+          Stk_plot_cor( DF, paste('diff_', Nam[i], sep = ''), 'week', 'year', 
+                    Diff,  'Temp [F]','[Weeks]'))
+   
+   }
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+grid.arrange(p5, p6, p7, p8, ncol=2)
+grid.arrange(p9, p10, ncol=2)
+
+```
+
+#### Figure 10: Yearly time course for the total (left) or differential (right)
+#### Temperature in 4 different sits and the average for the years 1999-2013
+
+***
+
+### Scatter plot can expose relation between different variables.
+### Next we will look on some relations. 
+
+
+
+***
+
+
+```{r echo=FALSE, Bivariate_scatter_chart__NG_Storage}
+
+p2<-  sct_plot_cor_2(D,'NG_Price', 'diff_storg', 'NG ver Diff Storage',
+                     'NG [$ per MBtu]', 'Storage [MBtu]')
+
+p1<- sct_plot_cor_2(D,'NG_Price', 'Tot_storg', 'NG ver Total Storage', 
+                    'NG [$ per MBtu]', 'Storage [MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+cor(D[,c( 'NG_Price', 'Tot_storg', 'diff_storg')], method = c('pearson'))
+
+```
+
+#### Figure 11 A: Natural Gas price versus total (left) or differential (right) 
+#### storage for the years 1999-2015.
+
+*** 
+
+```{r echo=FALSE, Bivariate_scatter_chart__NG_Temp}
+
+p2<-  sct_plot_cor_2(D, 'NG_Price', 'diff_Temp_MN', 'NG ver Diff Temp',
+                     'NG [$ per MBtu]', 'Temp [F]')
+p1<- sct_plot_cor_2(D, 'NG_Price', 'Temp_MN', 'NG ver Total Temp', 
+                    'NG [$ per MBtu]', 'Temp [F]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+cor(D[,c( 'NG_Price', 'Temp_MN', 'diff_Temp_MN')], method = c('pearson'))
+
+```
+
+#### Figure 11 B: Natural Gas price versus total (left) or differential (right)
+#### temperature  for the years 1999-2015.
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__S&P_NG_Price}
+
+p1<- sct_plot_cor_2(D, 'NG_Price', 'S_P_Close_adj', 
+                    'NG ver S&P','NG [$ per MBtu]',  'S&P [$]')
+
+p2<- sct_plot_cor_2(D, 'NG_Price', 'WTI_Price', 
+                    'NG ver Oil', 'NG [$ per MBtu]', 'Oil [$ per Barrel]')
+
+p3<- sct_plot_cor_2(D,'WTI_Price', 'S_P_Close_adj', 
+                    'Oil ver S&P', 'Oil [$ per Barrel]', 'S&P [$]')
+
+grid.arrange(p1, p2, p3, ncol=3)
+
+cor(D[,c( 'NG_Price', 'S_P_Close_adj', 'WTI_Price')], method = c('pearson'))
+
+
+```
+
+
+#### Figure 12: Natural Gas price versus oil and S&P and Oil versus S&P for the
+#### years 1999-2015
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__Storg_Temp}
+
+p1<- sct_plot_cor_2(D,'Tot_storg', 'Temp_MN', 
+                    'Avg Temp ver Total Storage', 
+                    'Storage [MBtu]', 'Temp [F]')
+
+p2<- sct_plot_cor_2(D,'diff_storg', 'diff_Temp_MN', 
+                    'diff Temp ver diff Storage', 
+                    'Storage [MBtu]', 'Temp [F]')
+
+grid.arrange(p1, p2, ncol=2)
+
+cor(D[,c( 'Tot_storg', 'Temp_MN', 'diff_storg', 'diff_Temp_MN')], method = c('pearson'))
+
+
+```
+
+#### Figure 13: temperatures versus Storage for total values (left) and 
+#### differential values (right), years 1999-2013. Notice how the phase 
+#### shift between these two cyclic variable create a circle on the left.
+
+***
+
+### Another way to find relations between variables is to categorize the 
+
+
+#### variable and presents the box plot for each category. here the category
+#### box plot for the average storage and for the Temperature. 
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__storg_NG}
+midpoint=2300
+
+p2<- jitt_plot(DF,'Tot_storg_B', 'NG_Price', 
+               'Tot_storg',midpoint,'(Years 1999-2015)', 
+               'Storage [Avrg, Over, Under]', 'NG [$ per MBtu]')
+p1<- Bx_plot(DF,'Tot_storg_B', 'NG_Price', 
+            'NG ver Storage', 'Storage [Avrg, Over, Under]', 
+            'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(NG_Price)), Tot_storg_B)
+A <- A[complete.cases(A), ]
+ summarise(A, To_strg_X_NG_Prce = cor(NG_Price, Tot_storg,  method = c('pearson')))
+
+
+```
+
+#### Figure 14: Distribution of Natural Gas price versus categorical storage  
+#### ('Over', 'Under' or around the average ('Avg')), for the years 1999-2015.
+#### the color bar represents the total storage for each value on the chart. 
+#### Notice thatwhen the storage is at its total low capacity (blue colors)  
+#### more valuestend to be categorized as 'under' and Natural Gas prices are
+#### higher.
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__Temp_MN_NG}
+
+# Temp ves NG_Price
+# NY
+midpoint=50
+
+p2<- jitt_plot(DF,'Temp_MN_B', 'NG_Price', 'Temp_MN', 
+               midpoint,'(Years 1999-2015)', 
+               'Temp [Avrg, Over, Under]', 
+               'NG [$ per MBtu]')
+p1<- Bx_plot(DF,'Temp_MN_B', 'NG_Price', 
+             'NG ver Diff Avg Temp', 
+             'Temp [Avrg, Over, Under]', 
+             'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(c(NG_Price))), Temp_MN_B)
+A <- A[complete.cases(A), ]
+ summarise(A, TMP_X_NG_Prce = cor(NG_Price, Temp_MN,  method = c('pearson')))
+
+```
+
+#### Figure 15: Distribution of Natural Gas price versus categorical average 
+#### Temperature ('Over', 'Under' or around the average ('Avg')), for the years
+#### 1999-2013. Notice that when the Temperature is at its total low boundary  
+#### (blue colors) more values tend to be categorized as 'under', In this case 
+#### Natural Gas prices are not significantly higher.
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__Temp_NY_NG}
+
+# Temp ves NG_Price
+# NY
+
+midpoint=50
+
+p2<- jitt_plot(DF,'Temp_NY_B', 'NG_Price', 'Temp_NY',
+               midpoint,'(Years 1999-2015)', 
+               'Temp', 
+               'NG [$ per MBtu]')
+p1<- Bx_plot(DF,'Temp_NY_B', 'NG_Price', 
+             'NG ver Temp NY', 
+             'Temp', 
+             'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(c(NG_Price))), Temp_NY_B)
+A <- A[complete.cases(A), ]
+ summarise(A, TMP_NY_X_NG_Prce = cor(NG_Price, Temp_NY,  method = c('pearson')))
+
+```
+
+#### Figure 16 : Same as for figure 15 but the temperature over New York. 
+#### Notice that when the Temperature is at its total low boundary  
+#### (blue colors) more values tend to be categorized as 'under', In this
+#### case Natural Gas prices are not significantly higher.
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__Temp_WY_NG}
+
+# WY
+
+midpoint=40
+
+p2<- jitt_plot(DF,'Temp_WY_B', 'NG_Price', 'Temp_WY',
+               midpoint,'(Years 1999-2015)', 
+               'Temp', 
+               'NG [$ per MBtu]')
+p1<- Bx_plot(DF,'Temp_WY_B', 'NG_Price', 
+             'NG ver Temp WY', 
+             'Temp', 
+             'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(c(NG_Price))), Temp_WY_B)
+A <- A[complete.cases(A), ]
+ summarise(A, TMP_WY_X_NG_Prce = cor(NG_Price, Temp_WY,  method = c('pearson')))
+
+```
+
+#### Figure 17 : Same as for figure 15 but the temperature over Wyoming.
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart_Temp_TX_NG}
+
+midpoint=50
+
+p2<- jitt_plot(DF,'Temp_TX_B', 'NG_Price', 'Temp_TX',
+               midpoint,'(Years 1999-2015)', 
+               'Temp', 
+               'NG [$ per MBtu]')
+
+p1<- Bx_plot(DF,'Temp_TX_B', 'NG_Price', 
+             'NG ver Temp TX', 
+             'Temp', 
+             'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(c(NG_Price))), Temp_TX_B)
+A <- A[complete.cases(A), ]
+ summarise(A, TMP_TX_X_NG_Prce = cor(NG_Price, Temp_TX,  method = c('pearson')))
+
+```
+
+#### Figure 18: Same as for figure 15 but the temperature over Texas.
+
+***
+
+```{r echo=FALSE, Bivariate_scatter_chart__Temp_CA_NG}
+
+midpoint=70
+
+p2<- jitt_plot(DF,'Temp_CA_B', 'NG_Price', 'Temp_CA',
+               midpoint,'(Years 1999-2015)', 
+               'Temp', 
+               'NG [$ per MBtu]')
+p1<- Bx_plot(DF,'Temp_CA_B', 'NG_Price', 
+             'NG ver Temp CA', 
+             'Temp', 
+             'NG [$ per MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+A <- group_by (subset(DF,!is.na(c(NG_Price))), Temp_CA_B)
+A <- A[complete.cases(A), ]
+ summarise(A, TMP_CA_X_NG_Prce = cor(NG_Price, Temp_CA,  method = c('pearson')))
+
+```
+
+#### Figure 19: Same as for figure 15 but the temperature over California.
+
+***
+<span style="color:blue; font-family:Georgia; font-size:2em;">
+ Bivariate Analysis
+ </span>
+ 
+### Talk about some of the relationships you observed in this part of the 
+### investigation. How did the feature(s) of interest vary with other features
+### in the dataset?
+
+--------
+
+
+#### 'Natural Gas total Storage' and 'Temperatures' reveal regular yearly 
+#### oscillation pattern (Figures 9 and 10). Obviously the temperatures at 
+#### different sites show relatively high correlation values (0.6-0.95), this 
+#### is easy to explain since the yearly common pattern is common in all  
+#### the sites is stronger than the local fluctuations.
+
+--------
+
+
+#### I expected to find high correlation between the total storage and the 
+#### Temperature, because extreme temperatures (cold or hot) will cause high
+#### consumption. Surprisingly the correlation between the variables is low 
+#### (r < 0.085 in three sites and ~0,15 in California). This can be explained
+#### by a phase shift between the two variables. The circular pattern in
+#### figure 13 on the left, support this explanation. 
+
+--------
+
+
+#### The correlation between Natural Gas prices and the temperature at different
+#### sites are lower than -0.07. 
+
+
+--------
+
+#### The correlation between Natural Gas prices and the storage is around 
+#### -0.15. The low correlations values support our basic assumption that the
+#### regular yearly pattern does not affect Natural Gas price.
+
+--------
+
+
+```{r echo=FALSE, Bivariate_Corr_Temp_storg_NG}
+
+
+cor(D[,c( 'Temp_CA', 'Temp_WY', 'Temp_TX', 
+          'Temp_NY', 'Temp_MN', 'Tot_storg', 
+          'NG_Price')], method = c('pearson'))
+
+```
+
+***
+
+#### The regular yearly oscillation in the Temperatures and storage
+#### are gone, after removing of the average (Figures 9 and 10). Correlations
+#### between sites are lower than 0.25. 
+
+
+--------
+
+#### The correlation between the temperature diff and the storage diff is 
+#### indeed higher than the correlation between the total values is but still
+#### very low (0.09 compare to 0.04). 
+
+--------
+
+
+#### As expected correlation we find relatively High negative correlation value
+#### between the storage diff and Natural Gas price (-0.31). 
+#### Indeed, in figure 14 we see that Storage 'Under' the average is associates 
+#### with high Natural Gas prices and vice verse. 
+
+
+--------
+
+#### The correlation between the temperature diff and Natural Gas prices is low
+#### (-0.1) just slightly higher than the total value (-0.07). 
+
+
+--------
+
+#### The correlation between Natural Gas prices and the diff temperature at 
+#### different sites are just slightly higher than the values obtained for the
+#### total temperature. (r > -0.1 compare to r > -0.07). 
+
+
+--------
+
+```{r echo=FALSE, Bivariate_Corr_diffTemp_diffstorg_NG}
+
+
+cor(D[,c('diff_Temp_CA','diff_Temp_WY', 'diff_Temp_TX', 
+         'diff_Temp_NY', 'diff_Temp_MN',   'diff_storg', 
+         'NG_Price')], method = c('pearson'))
+
+
+```
+
+***
+
+#### Correlation values between Natural Gas and Oil is ~ 0.22 and 
+#### between S&P is practically 0, 
+
+
+--------
+
+#### The correlation between Oil and S&P is relatively higher! 0.46. This can 
+#### be explained as economy growth is correlated with higher oil consumption.  
+
+
+--------
+
+#### Correlation values between oil and Natural Gas storage are surprisingly 
+#### higher (r ~ 0.6) compare to the negative correlation with the Natural 
+#### Gas price (r ~ -0.3). I'm not sure I understand this high correlation,
+#### but it is very interesting finding.
+
+
+--------
+
+
+```{r echo=FALSE, Bivariate_Corr_diffTemp_diffstorg_NG_Oil_S&P}
+
+
+cor(D[,c('diff_Temp_MN',  'diff_storg',  'S_P_Close_adj',  
+         'WTI_Price','NG_Price')], method = c('pearson'))
+
+```
+***
+
+=========
+
+### Did you observe any interesting relationships between the other features 
+###  (not the main feature(s) of interest)?
+
+---------
+
+#### see discussion above. 
+
+=========
+
+###What was the strongest relationship you found?
+
+-------
+
+#### Omitting the correlation between temperatures at different sites. Few 
+#### interesting relations. 
+
+#### diff_Temp_MN - NG_Price  -0.10
+
+#### diff_Temp_NY - diff_storg 0.11
+
+#### diff_storg   - WTI_Price  0.63
+
+#### Temp_MN      - WTI_Price  0.14
+
+#### S_P_Close_adj- WTI_Price  0.45
+
+#### WTI_Price    - Temp_MN    0.14
+
+=========
+
+***
+<span style="color:blue; font-family:Georgia; font-size:2em;">
+Multivariate Plots Section
+</span>
+
+***
+#### It is interesting if the correlations between the variables depend on the
+#### years. It is possible to visualise this by adding another feature to the 
+#### chart.  
+  
+
+***
+
+```{r echo=FALSE, Multivariate_Chart_NG_STRG_YEAR}
+
+p2<-  sct_plot_cor(D, 'NG_Price', 'diff_storg', 'year', 
+                   'Diff Storage - NG', 'NG [$ per MBtu]', 'Storage[MBtu]')
+p1<-  sct_plot_cor(D,'NG_Price', 'Tot_storg', 'year', 
+                   'Total Storage - NG', 'NG [$ per MBtu]', 'Storage[MBtu]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+
+p1<-  Bx_plot(D, 'diff_storg.bucket', 'NG_Price', 
+             'Diff Storage - NG', 'Storage', 'NG [$ per MBtu]')
+p2<-  sct_plot_cor(D,'NG_Price', 'year', 'diff_storg',
+               '(Years 1999-2013)', 'NG [$ per MBtu]', 'year ')
+
+grid.arrange(p1, p2,  ncol=2)
+
+```
+
+#### Figure 20: Natural Gas price versus Total and differential storage, the
+#### colors in the upper 2 figures depict the different years that grouped  
+#### together. The grouping is even stronger when we look at the diff storage
+#### on the right. The price versus years chart reveals that on some years the
+#### diff storage variable is mapped to the price as a drift from red to blue 
+#### (for example in 2012 and in 2001).
+
+
+--------
+
+#### We can calculate the correlation  between the price and the differential 
+#### storage at different years.  
+
+--------
+
+#### look at the correlation  between NG_Price and diff_storg across different  
+#### years
+
+--------
+
+```{r echo=FALSE, Multivariate_Corr_NG_STRG_YEAR}
+
+DF.corr[ ,c('year','Storage_corr')]
+
+ggplot( DF.corr, aes(x = year, y = Storage_corr)) +
+  geom_bar( stat='identity',
+            colour = 'darkgreen',
+            fill = 'gray')
+
+
+```
+
+#### Figure 21: Correlation between Natural Gas price and diff storage at 
+#### different years, clearly we can see that correlation change with years.
+#### But perhaps more importantly is that the changes are not chaotic but 
+#### have some trend.
+
+***
+
+```{r echo=FALSE, Multivariate_Chart_NG_Temp_YEAR}
+
+p2<-  sct_plot_cor(D, 'NG_Price', 'diff_Temp_MN', 'year', 
+                   'Diff Temp - NG', 'NG [$ per MBtu]', 'Temp [F]')
+p1<-  sct_plot_cor(D, 'NG_Price', 'Temp_MN', 'year', 
+                   'Total Temp - NG', 'NG [$ per MBtu]', 'Temp [F]')
+
+grid.arrange(p1, p2,  ncol=2)
+
+
+p1<-  Bx_plot(D, 'diff_Temp_MN.bucket', 'NG_Price', 
+              'Diff Temp - NG', 'Temp', 'NG [$ per MBtu]')
+
+p2<-  sct_plot_cor(D, 'NG_Price', 'year', 'diff_Temp_MN',
+               '(Years 1999-2013)', 'NG [$ per MBtu]', 'year')
+
+grid.arrange(p1, p2,  ncol=2)
+
+
+```
+
+#### Figure 22: same as in figure 20 but here Natural Gas is plotted versus 
+#### the diff Temp. Notice that in this case in every year (color) for the 
+#### same temp difference we have low and high prices. This is also apparent
+#### at the  change in price with years, (bottom right) the colors in this 
+####case do not drift gradually 
+
+
+--------
+
+#### Again we can look at the actual correlation values in each year.
+
+```{r echo=FALSE, cMultivariate_Corr_NG_Temp_YEAR}
+
+DF.corr[ ,c('year','Temp_corr')]
+
+
+ggplot( DF.corr, aes(x = year, y = Temp_corr)) +
+  geom_bar( colour = 'darkgreen', 
+            fill = 'gray',
+            stat = 'identity')
+
+```
+
+#### Figure 23 : in this case the correlation is lower, but again not chaotic 
+#### ( in most years we obtain negative correlation of around -0.2)
+
+***
+
+```{r echo=FALSE, Multivariate_Chart_NG_S&P_YEAR}
+
+
+p1 <- sct_plot_cor(D, 'NG_Price', 'S_P_Close_adj', 'year',
+                     'NG ver S&P', 'NG [$ per MBtu]', 'S&P [$]')
+
+p2 <- sct_plot_cor(D,  'NG_Price','year', 'S_P_Close_adj',
+                     '(1999-2013)', 'NG [$ per MBtu]', 'year')
+
+grid.arrange(p1, p2,  ncol=2)
+```
+
+
+```{r echo=FALSE, Multivariate_Corr_NG_S&P_YEAR}
+
+DF.corr[ ,c('year','S_P_corr')]
+
+
+ggplot( DF.corr, aes(x = year, y = S_P_corr)) +
+  geom_bar( colour = 'darkgreen',
+            fill = 'gray',
+            stat = 'identity')
+
+```
+
+#### Figure 24: same as above but here we look at the correlation between  
+#### Natural Gas and S&P, the correlation values in this case are sporadic. 
+
+***
+
+```{r echo=FALSE, Multivariate_Chart_NG_OIL_YEAR}
+
+p1 <- sct_plot_cor(D, 'NG_Price', 'WTI_Price', 'year', 
+                     'NG ver Oil', 'NG [$ per MBtu]', 'Oil [$ per Barrel]')
+p2 <- sct_plot_cor(D, 'NG_Price', 'year', 'WTI_Price', 
+                     '(1999-2013)', 'NG [$ per MBtu]', 'year')
+
+grid.arrange(p1, p2,  ncol=2)
+
+```
+
+
+
+```{r echo=FALSE, Multivariate_Corr_NG_OIL_YEAR}
+
+DF.corr[ ,c('year','WTI_corr')]
+
+ggplot( DF.corr, aes(x = year, y = WTI_corr)) +
+  geom_bar( colour = 'darkgreen', 
+            fill = 'gray',
+            stat = 'identity')
+
+```
+
+#### Figure 25: same as above but here we look at the correlation between
+#### Natural Gas and Oil, the correlation values in this case are sporadic. 
+***
+
+```{r echo=FALSE, Multivariate_Chart_storg_Temp_YEAR}
+
+p1 <- sct_plot_cor(D, 'diff_storg', 'diff_Temp_MN', 'year', 
+                     'Storage ver Temp', 'Storage [MBtu]', 'Temp [F]')
+p2 <- sct_plot_cor(D, 'diff_storg', 'year', 'diff_Temp_MN', 
+                     '(1999-2013)', 'Storage [MBtu]', 'year')
+
+grid.arrange(p1, p2,  ncol=2)
+
+```
+
+
+
+```{r echo=FALSE, Multivariate_Corr_storg_Temp_YEAR}
+
+DF.corr[ ,c('year','corr_Strg_Tmp')]
+
+ggplot( DF.corr, aes(x = year, y = corr_Strg_Tmp)) +
+  geom_bar( colour = 'darkgreen', 
+            fill = 'gray',
+            stat = 'identity')
+```
+
+#### Figure 26: same as above but here we look at the correlation between 
+#### diff storage and Diff Temp, the correlation values in this case are 
+#### sporadic. 
+***
+
+===========
+
+### Linear model using the Diff values of Temp and Storage 
+
+ 
+
+
+```{r echo=FALSE, Bivariate_Linear_Model}
+
+m1 <- lm(I(NG_Price) ~ I(diff_storg), data = D)
+m2 <- update(m1, ~ . + WTI_Price)
+m3 <- update(m2, ~ . + diff_Temp_MN)
+m4 <- update(m3, ~ . + S_P_Close_adj)
+
+models <- mtable(m1, m2, m3 ,m4)
+models
+```
+
+===========
+
+### Linear model using the Total values of Temp and Storage
+
+```{r echo=FALSE, Bivariate_Linear_Modeldiff}
+
+m1 <- lm(I(NG_Price) ~ I(Tot_storg), data = D)
+m2 <- update(m1, ~ . + Temp_MN)
+m3 <- update(m2, ~ . + S_P_Close_adj)
+m4 <- update(m3, ~ . + WTI_Price)
+
+
+models <- mtable(m1, m2, m3, m4)
+models
+
+```
+
+<span style="color:blue; font-family:Georgia; font-size:2em;">
+Multivariate Analysis
+</span>
+
+
+### Talk about some of the relationships you observed in this part of the 
+### investigation. Were there features that strengthened each other in terms
+### of looking at your feature(s) of interest?
+
+---------
+
+#### the most interesting observation is that indeed in different years the 
+#### correlation changes, this indicate that some feature I did not consider
+#### at first is influencing the correlations between Natural Gas price and
+#### the other variable. This might be related with the production side. 
+#### After all in the last few years with the development of the shell 
+#### drilling some major changes come to the energy market, and obviously still
+#### is.
+
+
+--------
+
+#### we can also see that in the correlation between the storage and the 
+#### temperature, since 2004the correlation between them is negative which means
+#### that even when temperature is extreme price still goes down as the over 
+#### supply dominating. 
+
+
+--------
+
+#### Another interesting relation is the positive correlation between Oil price 
+#### and gas storage, the correlation was higher in absolute values from the 
+#### correlation between the gas and its storage , and it was on a opposite 
+#### sign. That might be related with some complicated hedging the oil 
+#### companies apply using the Gaz price. 
+
+
+--------
+
+#### It is interesting that the correlation between the Natural Gas Price and 
+#### other parameters change in the course of years. This imply that perhaps
+#### there is another parameter that we did not consider in the analysis  most 
+#### interesting relation seems to be the cause that changes, strength this 
+#### point of view is the fact that the correlation between the Gas and the 
+#### oil is negative. 
+ 
+
+--------
+
+==========
+
+### Were there any interesting or surprising interactions between features?
+
+
+#### yes few surprises, look above , 
+
+
+--------
+
+==========
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the 
+### trengths and limitations of your model.
+
+
+#### yes I created a simple linear 
+
+#### The variables in the linear model account for 40% of the variance in the
+#### price of Natural Gas. The diff_storg explains 20% of the variance.
+#### When adding WTI_Price the explains ~40% of the variance.
+#### When adding diff_Temp_MN the model explains ~41% of the variance.
+
+
+==========
+
+
+# Final Plots and Summary
+
+----------
+
+### Plot One
+
+```{r echo=FALSE, Plot_One}
+
+ggplot(data = A1, aes(x = factor(year), y = NG_Price)) +
+  geom_boxplot() +
+  ylab('NG Price [$ per MBtu]') +
+  xlab('Years') +
+  ggtitle('Natural Gas Price as function of Time')
+  
+
+```
+
+### Description One
+#### Changes in Natural Gas prices (X-axis) as function of time 
+#### (Y-axis, [years]). Each bar represents the change within one year. In most
+#### years we find large change in price that sometimes can be even dramatic. 
+#### In this project we wanted to know which parameter affects Natural Gas prices. 
+
+------------
+
+### Plot Two
+
+```{r echo=FALSE, Plot_Two}
+
+ggplot(A1, aes(x = factor(corr_type), y = corr_tot, fill = corr_type)) +
+  stat_summary(fun.y = "mean", geom = "bar") +
+  facet_grid(. ~ year, scales = "free_x") + 
+  scale_fill_discrete(name = "Corr Type",
+                      breaks = c("Storage_corr", "Temp_corr", "WTI_corr"),
+                      labels = c("Storage", "Temp", "Oil")) +
+  ylab('Correlation') +
+  xlab('Years') +
+  ggtitle('Correlation values as function of Time (Natural Gas)')
+
+
+```
+
+### Description Two
+
+#### Correlations values (X=axis) as function of time (Y-axis [years]). Here 
+#### we compare the correlation of Natural Gas prices with storage (pink),
+#### Temperature (green) and Oil prices (blue). It is obvious that the 
+#### correlation change in different years. The correlation with storage 
+#### and temperature is negative in almost all years. The correlation with
+#### oil was positive till 2006 and since is negative. 
+
+
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+
+ggplot(A2, aes(x = factor(corr_type), y = corr_tot, fill = corr_type)) +
+  stat_summary(fun.y = "mean", geom = "bar") +
+  facet_grid(.~ year, scales = "free_x") + 
+  scale_fill_discrete(name = "Corr Type",
+                      breaks=c("WTI_storg", "WTI_S_P", "WTI_corr"),
+                      labels=c("Storage", "S&P", "NG")) +
+  ylab('Correlation') +
+  xlab('Years') +
+  ggtitle('Correlation values as function of Time (Oil)')
+
+
+```
+
+### Description Three
+#### Correlations values (X=axis) as function of time (Y-axis [years]). Here 
+#### we compare the correlation of Oil prices with storage (pink), S&P (green) 
+#### and Natural Gas prices (blue).
+#### It is obvious that in this case, correlation, despite being high change 
+#### signs even between consecutive years. Surprisingly even the correlation
+#### between S&P and Oil is not a clear cut. 
+
+ 
+------
+
+# Reflection
+
+#### The analysis show that Natural gas prices correlates with the temperature
+#### and the storage, we also found correlation with Oil prices. When looking 
+#### on the correlation data over years we notice that on average correlation 
+#### values do not change dramatically over time. 
+#### The same analysis done on Oil show those correlation values in this case 
+#### even being high are volatiles. This comparison suggests that a model for 
+#### NG price might work for longer than for Oil. 
+#### To build a better model I will need to look at other variables that might 
+#### affect the consumption demand balance. One option is rig count. 
+#### Another Option is to try to modify some parameters.  For example average 
+#### temperature over one week instead of one day, and then calculate the 
+#### difference might reflect longer periods of severe temperature that will 
+#### affect the storage. 
+
+
+
+
+
+
+
