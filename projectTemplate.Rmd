@@ -73,8 +73,8 @@ library(GGally)
 ========
 
 ```{r echo=FALSE, Load_analysed_Data_create_functions}
- 
- setwd('C:/Shmuel/Nanodegree/Explorer_Data_R_project')
+
+ setwd('f:/Nanodegree/Explorer_Data_R_project/For_sub')
  
  #############################Help Functions###################################
  # Function that read the weather file.
@@ -1756,6 +1756,7 @@ ggplot(A1, aes(x = factor(corr_type), y = corr_tot, fill = corr_type)) +
                       labels = c("Storage", "Temp", "Oil")) +
   ylab('Correlation') +
   xlab('Years') +
+  theme(axis.text.x = element_blank()) +
   ggtitle('Correlation values as function of Time (Natural Gas)')
 
 
@@ -1763,7 +1764,7 @@ ggplot(A1, aes(x = factor(corr_type), y = corr_tot, fill = corr_type)) +
 
 ### Description Two
 
-#### Correlations values (X=axis) as function of time (Y-axis [years]). Here 
+#### Correlations values (Y-axis) as function of time (X-axis [years]). Here 
 #### we compare the correlation of Natural Gas prices with storage (pink),
 #### Temperature (green) and Oil prices (blue). It is obvious that the 
 #### correlation change in different years. The correlation with storage 
@@ -1783,13 +1784,14 @@ ggplot(A2, aes(x = factor(corr_type), y = corr_tot, fill = corr_type)) +
                       labels=c("Storage", "S&P", "NG")) +
   ylab('Correlation') +
   xlab('Years') +
+  theme(axis.text.x = element_blank()) +
   ggtitle('Correlation values as function of Time (Oil)')
 
 
 ```
 
 ### Description Three
-#### Correlations values (X=axis) as function of time (Y-axis [years]). Here 
+#### Correlations values (Y-axis) as function of time (X-axis [years]). Here 
 #### we compare the correlation of Oil prices with storage (pink), S&P (green) 
 #### and Natural Gas prices (blue).
 #### It is obvious that in this case, correlation, despite being high change 
