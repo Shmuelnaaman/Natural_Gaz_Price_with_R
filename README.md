@@ -6,6 +6,8 @@ Natural gas price known as one of the more volatile commodity in the  market. Th
 
 http://rpubs.com/shmuelnaaman/80039 
 
+## 
+
 Projec code and HTML files: projectTemplate.Rmd and projectTemplate.html
 
 Refferance :
