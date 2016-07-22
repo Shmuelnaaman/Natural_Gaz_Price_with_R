@@ -9,4 +9,6 @@ Data format : Data_format_information.docx
 
 all reading of data are done in the code that is push and run 
 
+## Report in HTML format of the analysis:
+
 http://rpubs.com/shmuelnaaman/80039 
